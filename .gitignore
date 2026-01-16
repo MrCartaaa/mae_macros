@@ -1,0 +1,52 @@
+# -----------------------------
+# Rust / Cargo
+# -----------------------------
+/target/
+**/*.rs.bk
+**/*.rs.orig
+**/*.rs.tmp
+
+# Cargo lock files for workspaces (optional)
+# Cargo.lock
+
+# Cargo build cache
+**/debug/
+**/release/
+
+# Rust analyzer
+*.rs.meta
+rust-project.json
+
+# -----------------------------
+# Environment files
+# -----------------------------
+.env
+.env.*
+.env.local
+.env.production
+.env.development
+
+# -----------------------------
+# Docker
+# -----------------------------
+# Docker build artifacts
+docker-compose.override.yml
+Dockerfile.*
+.dockerignore
+*.dockerfile
+*.log
+*.pid
+
+# Docker volumes and containers (optional)
+docker-volume-*
+docker-container-*
+
+# -----------------------------
+# IDEs / Editors
+# -----------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*.bak
+*.tmp

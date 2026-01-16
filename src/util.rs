@@ -9,29 +9,42 @@ type BodyIdent = proc_macro2::TokenStream;
 // 2. Impl EnumIter for Fields -> this is to generate randomness for tests
 // 3, If there is a flag #[test] at the top of the repo struct to impl a randomness generator
 
-pub fn as_typed(ast: &DeriveInput) -> (Body, BodyIdent) {
+pub fn as_typed(ast: &DeriveInput,) -> (Body, BodyIdent,) {
     let fields = match &ast.data {
-        Data::Struct(DataStruct {
-            fields: Fields::Named(fields),
-            ..
-        }) => &fields.named,
-        _ => panic!("expected a struct with named fields"),
+        Data::Struct(DataStruct { fields: Fields::Named(fields,), .. },) => &fields.named,
+        _ => {
+            return (
+                syn::Error::new_spanned(&ast.ident, "expected a struct with named fields",)
+                    .to_compile_error(),
+                quote! { PatchField },
+            );
+        }
     };
+
     let mut to_arg = vec![];
     let mut to_string = vec![];
-    let body_ident = quote! {PatchField};
+    let body_ident = quote! { PatchField };
+
     let typed_enum = fields.iter().map(|f| {
-        let name = &f.ident;
+        let Some(name_ident,) = f.ident.as_ref() else {
+            // Defensive: named fields should always have an ident.
+            return syn::Error::new_spanned(f, "expected a named field (missing ident)",)
+                .to_compile_error();
+        };
+
         let ty = &f.ty;
-        let name_str = f.ident.as_ref().unwrap().to_string();
+        let name_str = name_ident.to_string();
+
         to_arg.push(quote! {
-            #body_ident::#name(arg) => args.add(arg)
-        });
+            #body_ident::#name_ident(arg) => args.add(arg)
+        },);
         to_string.push(quote! {
-            #body_ident::#name(_) => #name_str.to_string()
-        });
-        quote! {#name(#ty)}
-    });
+            #body_ident::#name_ident(_) => #name_str.to_string()
+        },);
+
+        quote! { #name_ident(#ty) }
+    },);
+
     let body = quote! {
         #[allow(non_snake_case, non_camel_case_types, nonstandard_style)]
         pub enum #body_ident {
@@ -66,38 +79,48 @@ pub fn as_typed(ast: &DeriveInput) -> (Body, BodyIdent) {
             }
         }
     };
-    (body, body_ident)
+    (body, body_ident,)
 }
 
-pub fn as_variant(ast: &DeriveInput) -> (Body, BodyIdent) {
+pub fn as_variant(ast: &DeriveInput,) -> (Body, BodyIdent,) {
     let fields = match &ast.data {
-        Data::Struct(DataStruct {
-            fields: Fields::Named(fields),
-            ..
-        }) => &fields.named,
-        _ => panic!("expected a struct with named fields"),
+        Data::Struct(DataStruct { fields: Fields::Named(fields,), .. },) => &fields.named,
+        _ => {
+            return (
+                syn::Error::new_spanned(&ast.ident, "expected a struct with named fields",)
+                    .to_compile_error(),
+                quote! { Field },
+            );
+        }
     };
 
-    let mut all_cols: Vec<String> = Vec::new();
-    let mut to_string_arms: Vec<proc_macro2::TokenStream> = Vec::new();
-    let mut variants: Vec<proc_macro2::TokenStream> = Vec::new();
+    let mut all_cols: Vec<String,> = Vec::new();
+    let mut to_string_arms: Vec<proc_macro2::TokenStream,> = Vec::new();
+    let mut variants: Vec<proc_macro2::TokenStream,> = Vec::new();
 
     let body_ident = quote! { Field };
 
     for f in fields.iter() {
-        let name = f.ident.as_ref().unwrap();
+        let Some(name,) = f.ident.as_ref() else {
+            variants.push(
+                syn::Error::new_spanned(f, "expected a named field (missing ident)",)
+                    .to_compile_error(),
+            );
+            continue;
+        };
+
         let name_str = name.to_string();
 
-        all_cols.push(name_str.clone());
+        all_cols.push(name_str.clone(),);
 
         to_string_arms.push(quote! {
             #body_ident::#name => #name_str.to_string()
-        });
+        },);
 
-        variants.push(quote! { #name });
+        variants.push(quote! { #name },);
     }
 
-    let all_cols_str = all_cols.join(", ");
+    let all_cols_str = all_cols.join(", ",);
 
     let body = quote! {
         #[allow(non_snake_case, non_camel_case_types, nonstandard_style)]
@@ -122,54 +145,71 @@ pub fn as_variant(ast: &DeriveInput) -> (Body, BodyIdent) {
         }
     };
 
-    (body, body_ident)
+    (body, body_ident,)
 }
-pub fn as_option(ast: &DeriveInput) -> (Body, BodyIdent) {
+
+pub fn as_option(ast: &DeriveInput,) -> (Body, BodyIdent,) {
     let fields = match &ast.data {
-        Data::Struct(DataStruct {
-            fields: Fields::Named(fields),
-            ..
-        }) => &fields.named,
-        _ => panic!("expected a struct with named fields"),
+        Data::Struct(DataStruct { fields: Fields::Named(fields,), .. },) => &fields.named,
+        _ => {
+            return (
+                syn::Error::new_spanned(&ast.ident, "expected a struct with named fields",)
+                    .to_compile_error(),
+                quote! { Row },
+            );
+        }
     };
+
     let body_ident = quote! { Row };
+
     let typed = fields.iter().map(|f| {
-        // TODO: some fields are auto generated from ctx, others from things like now().
-        // These fields should't be accessable in the option.
-        // these are tagged, filter on that.
-        // get_date, id, and from_context are the tags, but for the from context, we should add a
-        // function to generate that context
-        let name = &f.ident;
+        let Some(name_ident,) = f.ident.as_ref() else {
+            return syn::Error::new_spanned(f, "expected a named field (missing ident)",)
+                .to_compile_error();
+        };
         let ty = &f.ty;
-        quote! {pub #name: Option<#ty>}
-    });
+        quote! { pub #name_ident: Option<#ty> }
+    },);
+
     let string_some = fields.iter().map(|f| {
-        let name = &f.ident;
-        let name_str = name.as_ref().unwrap().to_string();
+        let Some(name_ident,) = f.ident.as_ref() else {
+            return syn::Error::new_spanned(f, "expected a named field (missing ident)",)
+                .to_compile_error();
+        };
+        let name_str = name_ident.to_string();
         quote! {
-            if let Some(v) = &self.#name {
+            if let Some(v) = &self.#name_ident {
                 sql.push(format!("{}", #name_str));
                 sql_i.push(format!("${}", i));
                 i += 1;
             }
         }
-    });
+    },);
+
     let bind_some = fields.iter().map(|f| {
-        let name = &f.ident;
+        let Some(name_ident,) = f.ident.as_ref() else {
+            return syn::Error::new_spanned(f, "expected a named field (missing ident)",)
+                .to_compile_error();
+        };
         quote! {
-            if let Some(v) = &self.#name {
+            if let Some(v) = &self.#name_ident {
                 let _ = args.add(v);
             }
         }
-    });
+    },);
+
     let bind_len = fields.iter().map(|f| {
-        let name = &f.ident;
+        let Some(name_ident,) = f.ident.as_ref() else {
+            return syn::Error::new_spanned(f, "expected a named field (missing ident)",)
+                .to_compile_error();
+        };
         quote! {
-            if let Some(v) = &self.#name {
+            if let Some(v) = &self.#name_ident {
                 count += 1;
             }
         }
-    });
+    },);
+
     let body = quote! {
         #[allow(non_snake_case, non_camel_case_types, nonstandard_style)]
         pub struct #body_ident {
@@ -211,5 +251,5 @@ pub fn as_option(ast: &DeriveInput) -> (Body, BodyIdent) {
             }
         }
     };
-    (body, body_ident)
+    (body, body_ident,)
 }

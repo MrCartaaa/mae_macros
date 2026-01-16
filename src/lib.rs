@@ -3,8 +3,7 @@
 #![deny(clippy::expect_used)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(unsafe_op_in_unsafe_fn)]
-
-#[allow(non_camel_case_types, nonstandard_style)]
+#![allow(non_camel_case_types, nonstandard_style)]
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
@@ -25,7 +24,18 @@ use util::*;
 pub fn run_app(_: TokenStream, input: TokenStream,) -> TokenStream {
     let input_fn = parse_macro_input!(input as ItemFn);
 
-    let fn_block = &input_fn.block.stmts[0];
+    // Avoid indexing panic if the function body is empty.
+    let fn_block = match input_fn.block.stmts.first() {
+        Some(stmt,) => stmt,
+        None => {
+            return syn::Error::new_spanned(
+                &input_fn.sig.ident,
+                "run_app requires at least one statement in the function body",
+            )
+            .to_compile_error()
+            .into();
+        }
+    };
 
     quote! {
     async fn run<Context: Clone + Send + 'static>(
@@ -82,7 +92,14 @@ pub fn schema(args: TokenStream, input: TokenStream,) -> TokenStream {
     // confirm the macro is being called on a Struct Type and extract the fields.
     let fields = match ast.data {
         Struct(DataStruct { fields: Named(FieldsNamed { ref named, .. },), .. },) => named,
-        _ => unimplemented!("Only works for structs"),
+        _ => {
+            return syn::Error::new_spanned(
+                repo_ident,
+                "schema only works for structs with named fields",
+            )
+            .to_compile_error()
+            .into();
+        }
     };
 
     // rebuild the struct fields
@@ -139,7 +156,14 @@ pub fn derive_mae_repo(item: TokenStream,) -> TokenStream {
     // Making sure it the derive macro is called on a struct;
     let _ = match &ast.data {
         Struct(DataStruct { fields: Fields::Named(fields,), .. },) => &fields.named,
-        _ => panic!("expected a struct with named fields"),
+        _ => {
+            return syn::Error::new_spanned(
+                &ast.ident,
+                "MaeRepo derive expects a struct with named fields",
+            )
+            .to_compile_error()
+            .into();
+        }
     };
 
     let (repo_option, _,) = as_option(&ast,);
@@ -150,7 +174,6 @@ pub fn derive_mae_repo(item: TokenStream,) -> TokenStream {
         #repo_option
         #repo_variant
         #repo_typed
-
     }
     .into()
 }

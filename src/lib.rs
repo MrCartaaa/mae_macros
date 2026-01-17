@@ -118,7 +118,7 @@ pub fn schema(args: TokenStream, input: TokenStream,) -> TokenStream {
     let repo = quote! {
 
         #(#repo_attrs)*
-        #[derive(mae_repo_macro::MaeRepo, Debug, sqlx::FromRow, serde::Serialize, serde::Deserialize, Clone)]
+        #[derive(mae_macros::MaeRepo, Debug, sqlx::FromRow, serde::Serialize, serde::Deserialize, Clone)]
         pub struct #repo_ident {
             #[id] pub id: i32,
             pub sys_client: i32,
@@ -176,4 +176,95 @@ pub fn derive_mae_repo(item: TokenStream,) -> TokenStream {
         #repo_typed
     }
     .into()
+}
+
+/// Expands:
+/// #[test]
+/// async fn foo() { ... }
+///
+/// into:
+/// #[allow(clippy::disallowed_methods)]
+/// #[tokio::test(flavor = "multi_thread")]
+/// async fn foo() { ... }
+#[proc_macro_attribute]
+pub fn mae_test(_attr: TokenStream, item: TokenStream,) -> TokenStream {
+    let mut f = match syn::parse::<syn::ItemFn,>(item,) {
+        Ok(f,) => f,
+        Err(_,) => {
+            return syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "#[mae_test] can only be applied to a function",
+            )
+            .to_compile_error()
+            .into();
+        }
+    };
+
+    // Tests can't take arguments.
+    if !f.sig.inputs.is_empty() {
+        return syn::Error::new_spanned(
+            &f.sig.inputs,
+            "#[mae_test] test functions must not take arguments",
+        )
+        .to_compile_error()
+        .into();
+    }
+
+    // Capture original body before rewriting.
+    let orig_block = *f.block;
+
+    // ---- Enforce: no assert*/unwrap/expect in the user's test body ----
+    // (String-based scan; simple and effective for policy enforcement.)
+    let body_s = quote::quote!(#orig_block).to_string();
+
+    let forbidden = [
+        ".expect",    // Result::expect / Option::expect
+        ".unwrap",    // Result::unwrap / Option::unwrap
+        "assert!",    // assert!
+        "assert_eq!", // assert_eq!
+        "assert_ne!", // assert_ne!
+    ];
+
+    if forbidden.iter().any(|pat| body_s.contains(pat,),) {
+        return syn::Error::new_spanned(
+            &orig_block,
+            "#[mae_test] forbids assert*/unwrap/expect in test bodies; use must::* helpers or return Result and use `?`",
+        )
+        .to_compile_error()
+        .into();
+    }
+
+    // Extract return type as a Type.
+    let ret_ty: syn::Type = match &f.sig.output {
+        syn::ReturnType::Default => syn::parse_quote!(()),
+        syn::ReturnType::Type(_, ty,) => (**ty).clone(),
+    };
+
+    // Ensure the outer test function is synchronous; we drive an async block ourselves.
+    f.sig.asyncness = None;
+
+    // Outer test function gets ONLY #[test] (no clippy allow here).
+    // Preserve other attrs the user may have added (doc cfg etc.).
+    f.attrs.insert(0, syn::parse_quote!(#[test]),);
+
+    // Generate body: inner helper has the clippy allow, and ONLY contains runtime + teardown.
+    f.block = Box::new(syn::parse_quote!({
+        #[allow(clippy::disallowed_methods)]
+        fn __mae_run_test() -> #ret_ty {
+            let __mae_rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build tokio runtime for #[mae_test]");
+
+            __mae_rt.block_on(async move {
+                let __ret: #ret_ty = (async move #orig_block).await;
+                crate::common::context::teardown().await;
+                __ret
+            })
+        }
+
+        __mae_run_test()
+    }),);
+
+    TokenStream::from(quote::quote!(#f),)
 }

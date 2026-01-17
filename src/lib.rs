@@ -187,6 +187,7 @@ pub fn derive_mae_repo(item: TokenStream,) -> TokenStream {
 /// #[tokio::test(flavor = "multi_thread")]
 /// async fn foo() { ... }
 #[proc_macro_attribute]
+#[allow(clippy::replace_box)]
 pub fn mae_test(_attr: TokenStream, item: TokenStream,) -> TokenStream {
     let mut f = match syn::parse::<syn::ItemFn,>(item,) {
         Ok(f,) => f,

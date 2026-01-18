@@ -1,5 +1,5 @@
 use quote::quote;
-use syn::{Data, DataStruct, DeriveInput, Fields};
+use syn::{Data, DataStruct, DeriveInput, Field, Fields, LitStr};
 
 type Body = proc_macro2::TokenStream;
 type BodyIdent = proc_macro2::TokenStream;
@@ -252,4 +252,38 @@ pub fn as_option(ast: &DeriveInput,) -> (Body, BodyIdent,) {
         }
     };
     (body, body_ident,)
+}
+
+// Utils to find various attributes
+fn find_get_attr(field: &Field, attr_name: &'static str,) -> Option<syn::Ident,> {
+    let Some(ident,) = field.ident.clone() else {
+        return None; // ignore tuple fields
+    };
+
+    for attr in &field.attrs {
+        if attr.path().is_ident(attr_name,) {
+            return Some(ident,);
+        }
+    }
+
+    None
+}
+fn find_get_attr_with_args(
+    field: &Field,
+    attr_name: &'static str,
+) -> Result<Option<(syn::Ident, String,),>, syn::Error,> {
+    let Some(ident,) = field.ident.clone() else {
+        return Ok(None,); // ignore tuple fields
+    };
+
+    for attr in &field.attrs {
+        if attr.path().is_ident(attr_name,) {
+            let lit: LitStr = attr.parse_args().map_err(|_| {
+                syn::Error::new_spanned(attr, format!("expected #[{}(\"...\")]", attr_name),)
+            },)?;
+            return Ok(Some((ident, lit.value(),),),);
+        }
+    }
+
+    Ok(None,)
 }

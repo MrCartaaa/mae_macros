@@ -9,7 +9,7 @@ type BodyIdent = proc_macro2::TokenStream;
 // 2. Impl EnumIter for Fields -> this is to generate randomness for tests
 // 3, If there is a flag #[test] at the top of the repo struct to impl a randomness generator
 
-pub fn as_typed(ast: &DeriveInput,) -> (Body, BodyIdent,) {
+pub fn to_patches(ast: &DeriveInput,) -> (Body, BodyIdent,) {
     let fields = match &ast.data {
         Data::Struct(DataStruct { fields: Fields::Named(fields,), .. },) => &fields.named,
         _ => {
@@ -23,26 +23,34 @@ pub fn as_typed(ast: &DeriveInput,) -> (Body, BodyIdent,) {
 
     let mut to_arg = vec![];
     let mut to_string = vec![];
+    let mut typed_enum = vec![];
     let body_ident = quote! { PatchField };
 
-    let typed_enum = fields.iter().map(|f| {
-        let Some(name_ident,) = f.ident.as_ref() else {
-            // Defensive: named fields should always have an ident.
-            return syn::Error::new_spanned(f, "expected a named field (missing ident)",)
-                .to_compile_error();
-        };
-
-        let ty = &f.ty;
-        let name_str = name_ident.to_string();
-
-        to_arg.push(quote! {
-            #body_ident::#name_ident(arg) => args.add(arg)
-        },);
-        to_string.push(quote! {
-            #body_ident::#name_ident(_) => #name_str.to_string()
+    fields.iter().for_each(|f| {
+        let name_ident = f.ident.as_ref().ok_or_else(|| {
+            syn::Error::new_spanned(&ast.ident, "missing a name field (missing ident.)",)
+                .to_compile_error()
         },);
 
-        quote! { #name_ident(#ty) }
+        // we need to check if either there are no attrs, or if attr != locked | != insert_only
+        if let Ok(name_ident,) = name_ident
+            && f.attrs
+                .iter()
+                .map(|a| !a.path().is_ident("locked",) && !a.path().is_ident("insert_only",),)
+                .all(|a| a == true,)
+        {
+            let ty = &f.ty;
+            let name_str = name_ident.to_string();
+
+            to_arg.push(quote! {
+                #body_ident::#name_ident(arg) => args.add(arg)
+            },);
+            to_string.push(quote! {
+                #body_ident::#name_ident(_) => #name_str.to_string()
+            },);
+
+            typed_enum.push(quote! { #name_ident(#ty) },);
+        }
     },);
 
     let body = quote! {
@@ -82,7 +90,7 @@ pub fn as_typed(ast: &DeriveInput,) -> (Body, BodyIdent,) {
     (body, body_ident,)
 }
 
-pub fn as_variant(ast: &DeriveInput,) -> (Body, BodyIdent,) {
+pub fn to_fields(ast: &DeriveInput,) -> (Body, BodyIdent,) {
     let fields = match &ast.data {
         Data::Struct(DataStruct { fields: Fields::Named(fields,), .. },) => &fields.named,
         _ => {
@@ -148,7 +156,7 @@ pub fn as_variant(ast: &DeriveInput,) -> (Body, BodyIdent,) {
     (body, body_ident,)
 }
 
-pub fn as_option(ast: &DeriveInput,) -> (Body, BodyIdent,) {
+pub fn to_row(ast: &DeriveInput, attr_black_list: Vec<String,>,) -> (Body, BodyIdent,) {
     let fields = match &ast.data {
         Data::Struct(DataStruct { fields: Fields::Named(fields,), .. },) => &fields.named,
         _ => {
@@ -160,52 +168,72 @@ pub fn as_option(ast: &DeriveInput,) -> (Body, BodyIdent,) {
         }
     };
 
-    let body_ident = quote! { Row };
+    let is_insert_row = attr_black_list.contains(&"update_only".to_string(),);
+    let is_update_row = !is_insert_row;
 
-    let typed = fields.iter().map(|f| {
-        let Some(name_ident,) = f.ident.as_ref() else {
-            return syn::Error::new_spanned(f, "expected a named field (missing ident)",)
-                .to_compile_error();
-        };
-        let ty = &f.ty;
-        quote! { pub #name_ident: Option<#ty> }
-    },);
+    let body_ident = if is_insert_row {
+        quote! { InsertRow}
+    } else {
+        quote! {UpdateRow}
+    };
 
-    let string_some = fields.iter().map(|f| {
-        let Some(name_ident,) = f.ident.as_ref() else {
-            return syn::Error::new_spanned(f, "expected a named field (missing ident)",)
-                .to_compile_error();
-        };
-        let name_str = name_ident.to_string();
-        quote! {
-            if let Some(v) = &self.#name_ident {
-                sql.push(format!("{}", #name_str));
-                sql_i.push(format!("${}", i));
-                i += 1;
-            }
-        }
-    },);
+    let mut props = vec![];
+    let mut string_some = vec![];
+    let mut bind_some = vec![];
+    let mut bind_len = vec![];
 
-    let bind_some = fields.iter().map(|f| {
-        let Some(name_ident,) = f.ident.as_ref() else {
-            return syn::Error::new_spanned(f, "expected a named field (missing ident)",)
-                .to_compile_error();
-        };
-        quote! {
-            if let Some(v) = &self.#name_ident {
-                let _ = args.add(v);
-            }
-        }
-    },);
+    fields.iter().for_each(|f| {
+        let name_ident = f.ident.as_ref().ok_or_else(|| {
+            syn::Error::new_spanned(&ast.ident, "missing a name field (missing ident.)",)
+                .to_compile_error()
+        },);
 
-    let bind_len = fields.iter().map(|f| {
-        let Some(name_ident,) = f.ident.as_ref() else {
-            return syn::Error::new_spanned(f, "expected a named field (missing ident)",)
-                .to_compile_error();
-        };
-        quote! {
-            if let Some(v) = &self.#name_ident {
-                count += 1;
+        // we need to check if either there are no attrs, or if attr != locked | != insert_only
+        if let Ok(name_ident,) = name_ident
+            && f.attrs
+                .iter()
+                .map(|a| {
+                    attr_black_list.iter().map(|abl| !a.path().is_ident(abl,),).all(|a| a == true,)
+                },)
+                .all(|a| a == true,)
+        {
+            let ty = &f.ty;
+            if is_insert_row {
+                props.push(quote! { pub #name_ident: #ty },);
+
+                let name_str = name_ident.to_string();
+                string_some.push(quote! {
+                    sql.push(format!("{}", #name_str));
+                    sql_i.push(format!("${}", i));
+                    i += 1;
+                },);
+
+                bind_len.push(quote! {
+                        count += 1;
+                },);
+                bind_some.push(quote! {
+                    let _ = args.add(&self.#name_ident);
+                },);
+            } else {
+                props.push(quote! { pub #name_ident: Option<#ty> },);
+
+                let name_str = name_ident.to_string();
+                string_some.push(quote! {
+                if let Some(v) = &self.#name_ident {
+                    sql.push(format!("{}", #name_str));
+                    sql_i.push(format!("${}", i));
+                    i += 1;
+                };},);
+
+                bind_len.push(quote! {
+                    if let Some(v) = &self.#name_ident {
+                        count += 1;
+                    };
+                },);
+                bind_some.push(quote! {
+                if let Some(v) = &self.#name_ident {
+                    let _ = args.add(v);
+                };},);
             }
         }
     },);
@@ -213,30 +241,17 @@ pub fn as_option(ast: &DeriveInput,) -> (Body, BodyIdent,) {
     let body = quote! {
         #[allow(non_snake_case, non_camel_case_types, nonstandard_style)]
         pub struct #body_ident {
-            #(#typed,)*
+            #(#props,)*
         }
-        //
-        // impl std::fmt::Display for #body_ident {
-        //     fn fmt(&self, &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        //         todo!()
-        //     }
-        // }
 
-        impl #body_ident {
-            fn sql(&self) -> mae::repo::__private__::AsSqlParts {
+        impl mae::repo::__private__::ToSqlParts for #body_ident {
+            fn to_sql_parts(&self) -> mae::repo::__private__::AsSqlParts {
                 let mut i = 1;
                 let mut sql = vec![];
                 let mut sql_i = vec![];
                 #(#string_some)*
 
                 (sql, Some(sql_i))
-            }
-        }
-
-        impl mae::repo::__private__::ToSqlParts for #body_ident {
-            fn to_sql_parts(&self) -> mae::repo::__private__::AsSqlParts {
-                self.sql()
-
             }
         }
 

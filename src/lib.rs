@@ -120,7 +120,9 @@ pub fn schema(args: TokenStream, input: TokenStream,) -> TokenStream {
         #(#repo_attrs)*
         #[derive(mae_macros::MaeRepo, Debug, sqlx::FromRow, serde::Serialize, serde::Deserialize, Clone)]
         pub struct #repo_ident {
-            #[id] pub id: i32,
+            #[locked]
+            pub id: i32,
+            #[insert_only]
             pub sys_client: i32,
             pub status: mae::repo::default::DomainStatus,
             #(#params,)*
@@ -129,12 +131,18 @@ pub fn schema(args: TokenStream, input: TokenStream,) -> TokenStream {
             pub tags: serde_json::Value,
             #[sqlx(json)]
             pub sys_detail: serde_json::Value,
-            #[from_context] pub created_by: i32,
-            #[from_context] pub updated_by: i32,
-            #[gen_date] pub created_at: chrono::DateTime<chrono::Utc>,
+            // TODO: #[from_context]
+            #[insert_only]
+            pub created_by: i32,
+            // TODO: #[from_context]
+            #[update_only]
+            pub updated_by: i32,
+            #[locked]
+            pub created_at: chrono::DateTime<chrono::Utc>,
+            #[locked]
             pub updated_at: chrono::DateTime<chrono::Utc>,
         }
-        impl mae::repo::__private__::Build<#ctx, Row, Field, PatchField> for #repo_ident {
+        impl mae::repo::__private__::Build<#ctx, InsertRow, UpdateRow, Field, PatchField> for #repo_ident {
             fn schema() -> String {
                 #schema.to_string()
             }
@@ -149,7 +157,7 @@ pub fn schema(args: TokenStream, input: TokenStream,) -> TokenStream {
 //  2. gen_date should be changed to private_replace("now()") to replace the field's display +
 //     BindArgs
 
-#[proc_macro_derive(MaeRepo, attributes(id, from_context, gen_date))]
+#[proc_macro_derive(MaeRepo, attributes(from_context, insert_only, update_only, locked))]
 pub fn derive_mae_repo(item: TokenStream,) -> TokenStream {
     let ast = parse_macro_input!(item as DeriveInput);
 
@@ -166,12 +174,14 @@ pub fn derive_mae_repo(item: TokenStream,) -> TokenStream {
         }
     };
 
-    let (repo_option, _,) = as_option(&ast,);
-    let (repo_typed, _,) = as_typed(&ast,);
-    let (repo_variant, _,) = as_variant(&ast,);
+    let (insert_row, _,) = to_row(&ast, vec!["locked".into(), "update_only".into()],);
+    let (update_row, _,) = to_row(&ast, vec!["locked".into(), "insert_only".into()],);
+    let (repo_typed, _,) = to_patches(&ast,);
+    let (repo_variant, _,) = to_fields(&ast,);
 
     quote! {
-        #repo_option
+        #insert_row
+        #update_row
         #repo_variant
         #repo_typed
     }
@@ -257,11 +267,32 @@ pub fn mae_test(_attr: TokenStream, item: TokenStream,) -> TokenStream {
                 .build()
                 .expect("failed to build tokio runtime for #[mae_test]");
 
-            __mae_rt.block_on(async move {
-                let __ret: #ret_ty = (async move #orig_block).await;
-                crate::common::context::teardown().await;
-                __ret
-            })
+            let __user_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                __mae_rt.block_on(async move {
+                    // run user test body
+                    (async move #orig_block).await
+                })
+            }));
+
+            // Always attempt teardown, even if the user body panicked.
+            let __teardown_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                __mae_rt.block_on(async move {
+                    crate::common::context::teardown().await;
+                })
+            }));
+
+            match (__user_result, __teardown_result) {
+                (Ok(__ret), Ok(())) => __ret,
+
+                // User panicked; teardown succeeded -> rethrow original panic
+                (Err(__panic), Ok(())) => std::panic::resume_unwind(__panic),
+
+                // User succeeded; teardown panicked -> surface teardown panic
+                (Ok(_), Err(__panic)) => std::panic::resume_unwind(__panic),
+
+                // Both panicked -> prefer original user panic (teardown panic would mask test failure)
+                (Err(__panic), Err(_teardown_panic)) => std::panic::resume_unwind(__panic),
+            }
         }
 
         __mae_run_test()

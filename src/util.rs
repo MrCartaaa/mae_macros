@@ -25,6 +25,7 @@ pub fn to_patches(ast: &DeriveInput,) -> (Body, BodyIdent,) {
     let mut to_string = vec![];
     let mut typed_enum = vec![];
     let body_ident = quote! { PatchField };
+    let mut debug_bindings = vec![];
 
     fields.iter().for_each(|f| {
         let name_ident = f.ident.as_ref().ok_or_else(|| {
@@ -49,12 +50,17 @@ pub fn to_patches(ast: &DeriveInput,) -> (Body, BodyIdent,) {
                 #body_ident::#name_ident(_) => #name_str.to_string()
             },);
 
+            debug_bindings.push(quote! {
+                #body_ident::#name_ident(b) => write!(f, "{:?}", b)
+            },);
+
             typed_enum.push(quote! { #name_ident(#ty) },);
         }
     },);
 
     let body = quote! {
         #[allow(non_snake_case, non_camel_case_types, nonstandard_style)]
+        #[derive(Clone)]
         pub enum #body_ident {
             #(#typed_enum,)*
         }
@@ -84,6 +90,14 @@ pub fn to_patches(ast: &DeriveInput,) -> (Body, BodyIdent,) {
             fn bind_len(&self) -> usize {
                 // NOTE: There will always be one arg for a PatchField
                 1
+            }
+        }
+
+        impl std::fmt::Debug for #body_ident {
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                match self {
+                    #(#debug_bindings,)*
+                }
             }
         }
     };
@@ -132,6 +146,7 @@ pub fn to_fields(ast: &DeriveInput,) -> (Body, BodyIdent,) {
 
     let body = quote! {
         #[allow(non_snake_case, non_camel_case_types, nonstandard_style)]
+        #[derive(Clone)]
         pub enum #body_ident {
             All,
             #(#variants,)*
@@ -181,6 +196,7 @@ pub fn to_row(ast: &DeriveInput, attr_black_list: Vec<String,>,) -> (Body, BodyI
     let mut string_some = vec![];
     let mut bind_some = vec![];
     let mut bind_len = vec![];
+    let mut debug_bindings = vec![];
 
     fields.iter().for_each(|f| {
         let name_ident = f.ident.as_ref().ok_or_else(|| {
@@ -203,9 +219,9 @@ pub fn to_row(ast: &DeriveInput, attr_black_list: Vec<String,>,) -> (Body, BodyI
 
                 let name_str = name_ident.to_string();
                 string_some.push(quote! {
+                    i += 1;
                     sql.push(format!("{}", #name_str));
                     sql_i.push(format!("${}", i));
-                    i += 1;
                 },);
 
                 bind_len.push(quote! {
@@ -214,15 +230,19 @@ pub fn to_row(ast: &DeriveInput, attr_black_list: Vec<String,>,) -> (Body, BodyI
                 bind_some.push(quote! {
                     let _ = args.add(&self.#name_ident);
                 },);
+                debug_bindings.push(quote! {
+                    sql_i += 1;
+                    write!(f, "\n\t${} = {:?}", sql_i, &self.#name_ident)?;
+                },)
             } else {
                 props.push(quote! { pub #name_ident: Option<#ty> },);
 
                 let name_str = name_ident.to_string();
                 string_some.push(quote! {
                 if let Some(v) = &self.#name_ident {
+                    i += 1;
                     sql.push(format!("{}", #name_str));
                     sql_i.push(format!("${}", i));
-                    i += 1;
                 };},);
 
                 bind_len.push(quote! {
@@ -234,19 +254,26 @@ pub fn to_row(ast: &DeriveInput, attr_black_list: Vec<String,>,) -> (Body, BodyI
                 if let Some(v) = &self.#name_ident {
                     let _ = args.add(v);
                 };},);
+                debug_bindings.push(quote! {
+                    if let Some(v) = &self.#name_ident {
+                        sql_i += 1;
+                        write!(f, "\n\t${} = {:?}", sql_i, v)?;
+                    };
+                },);
             }
         }
     },);
 
     let body = quote! {
         #[allow(non_snake_case, non_camel_case_types, nonstandard_style)]
+        #[derive(Clone)]
         pub struct #body_ident {
             #(#props,)*
         }
 
         impl mae::repo::__private__::ToSqlParts for #body_ident {
             fn to_sql_parts(&self) -> mae::repo::__private__::AsSqlParts {
-                let mut i = 1;
+                let mut i = 0;
                 let mut sql = vec![];
                 let mut sql_i = vec![];
                 #(#string_some)*
@@ -263,6 +290,14 @@ pub fn to_row(ast: &DeriveInput, attr_black_list: Vec<String,>,) -> (Body, BodyI
                 let mut count = 0;
                 #(#bind_len)*
                 count
+            }
+        }
+
+        impl std::fmt::Debug for #body_ident {
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                let mut sql_i = 0;
+                #(#debug_bindings)*
+                std::fmt::Result::Ok(())
             }
         }
     };

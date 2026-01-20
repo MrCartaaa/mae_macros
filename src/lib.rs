@@ -131,11 +131,9 @@ pub fn schema(args: TokenStream, input: TokenStream,) -> TokenStream {
             pub tags: serde_json::Value,
             #[sqlx(json)]
             pub sys_detail: serde_json::Value,
-            // TODO: #[from_context]
-            #[insert_only]
+            #[locked]
             pub created_by: i32,
-            // TODO: #[from_context]
-            #[update_only]
+            #[locked]
             pub updated_by: i32,
             #[locked]
             pub created_at: chrono::DateTime<chrono::Utc>,
@@ -180,9 +178,9 @@ pub fn derive_mae_repo(item: TokenStream,) -> TokenStream {
     let (repo_variant, _,) = to_fields(&ast,);
 
     quote! {
+        #repo_variant
         #insert_row
         #update_row
-        #repo_variant
         #repo_typed
     }
     .into()

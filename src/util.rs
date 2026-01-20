@@ -5,9 +5,12 @@ type Body = proc_macro2::TokenStream;
 type BodyIdent = proc_macro2::TokenStream;
 
 // TODO:
-// 1. There should be a From impl for Patch -> Field
-// 2. Impl EnumIter for Fields -> this is to generate randomness for tests
-// 3, If there is a flag #[test] at the top of the repo struct to impl a randomness generator
+// Impl EnumIter for Fields -> this is to generate randomness for tests
+// If there is a flag #[test] at the top of the repo struct to impl a randomness generator
+// From impl:
+// impl Patch -> Field
+// impl Patch => Filter
+// impl Row => Filter
 
 pub fn to_patches(ast: &DeriveInput,) -> (Body, BodyIdent,) {
     let fields = match &ast.data {

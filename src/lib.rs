@@ -149,12 +149,6 @@ pub fn schema(args: TokenStream, input: TokenStream,) -> TokenStream {
     repo.into()
 }
 
-// TODO:
-//  attributes
-//  1. from_context should take a function type to calculate it
-//  2. gen_date should be changed to private_replace("now()") to replace the field's display +
-//     BindArgs
-
 #[proc_macro_derive(MaeRepo, attributes(from_context, insert_only, update_only, locked))]
 pub fn derive_mae_repo(item: TokenStream,) -> TokenStream {
     let ast = parse_macro_input!(item as DeriveInput);

@@ -4,6 +4,8 @@
 # Environment variables in `env` are exported before test command runs.
 # `flags` are appended to the selected test command.
 
+# mae_macros: no tests, no llvm-cov. coverage_threshold=0 skips the coverage step.
+# Template accepted rate for other crates is 85 (rust_template#54).
 coverage_threshold = 0
 
 engine = "nextest"

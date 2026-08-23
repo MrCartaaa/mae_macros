@@ -38,8 +38,8 @@ fi
 # Config
 ########################################
 TEMPLATE_FILE=".rust_template_version"
-TEMPLATE_REMOTE="https://github.com/MrCartaaa/rust_template.git"
-TEMPLATE_SSH="git@github.com:MrCartaaa/rust_template.git"
+TEMPLATE_REMOTE="https://github.com/Mae-Technologies/rust_template.git"
+TEMPLATE_SSH="git@github.com:Mae-Technologies/rust_template.git"
 TEMPLATE_BRANCH="main"
 
 CURRENT_REMOTE_URL=$(git remote get-url origin 2>/dev/null || true)

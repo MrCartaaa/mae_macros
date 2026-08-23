@@ -73,11 +73,6 @@ done
 info "🦀  Rust quality gate detected — running pre-push checks"
 echo
 
-# rust-toolchain.toml is honored only by rustup's cargo, not distro-packaged cargo.
-if [[ -d "${HOME}/.cargo/bin" ]]; then
-  export PATH="${HOME}/.cargo/bin:${PATH}"
-fi
-
 run() {
   local label="$1"
   shift
@@ -104,15 +99,13 @@ else
 fi
 
 ########################################
-# 📊 Coverage (cargo llvm-cov)
+# 📊 Coverage (cargo llvm-cov) — tests/ suite, no Docker
+#
+# Same measurement as GHA: docker-gated #[mae_test(docker)] tests skip.
+# Behavioral e2e already ran via int-test.sh above (MAE_TESTCONTAINERS=1).
+# Prefer tests/ (unit_coverage.rs, tests/coverage/*, tests/unit/*) over inline
+# #[cfg(test)]. coverage_threshold=0 skips this step (mae_macros).
 ########################################
-if ! command -v cargo-llvm-cov >/dev/null 2>&1 && ! cargo llvm-cov --version >/dev/null 2>&1; then
-  err "❌ cargo-llvm-cov is not installed — coverage checking is mandatory."
-  err "   Install it: see DEVELOPMENT.md or https://github.com/taiki-e/cargo-llvm-cov#installation"
-  exit 1
-fi
-
-# Read coverage threshold from CI config (fall back to 45%)
 COV_THRESHOLD=45
 CI_ENV_TOML="$(dirname "$0")/../.ci/ci_env.toml"
 if [[ -f "$CI_ENV_TOML" ]]; then
@@ -126,8 +119,21 @@ print(d.get('coverage_threshold', ''))
   fi
 fi
 
-run "coverage (≥${COV_THRESHOLD}% lines)" rustup run nightly cargo llvm-cov --lib --fail-under-lines "$COV_THRESHOLD"
-ok "✔  Coverage threshold met"
+if [[ "$COV_THRESHOLD" == "0" ]]; then
+  warn "coverage_threshold=0 — skipping llvm-cov"
+elif [[ -n "${SKIP_TESTS:-}" ]]; then
+  warn "⚡ SKIP_TESTS set — skipping coverage"
+else
+  if ! command -v cargo-llvm-cov >/dev/null 2>&1 && ! cargo llvm-cov --version >/dev/null 2>&1; then
+    err "❌ cargo-llvm-cov is not installed — coverage checking is mandatory."
+    err "   Install it: see DEVELOPMENT.md or https://github.com/taiki-e/cargo-llvm-cov#installation"
+    exit 1
+  fi
+  unset MAE_TESTCONTAINERS
+  run "coverage (≥${COV_THRESHOLD}% lines, tests/ suite, no Docker)" \
+    cargo +nightly llvm-cov nextest --no-pager --no-tests=warn --fail-under-lines "$COV_THRESHOLD"
+  ok "✔  Coverage threshold met"
+fi
 
 ########################################
 # 🔍 Lint / Security / Policy

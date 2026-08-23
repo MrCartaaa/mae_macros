@@ -1,0 +1,54 @@
+application:
+  host: "0.0.0.0"
+  port: 8080
+  cors_allowed_origin: "http://localhost"
+  # Base URL used by mae for link generation and cookie domains.
+  # Services should override this per-environment if they are exposed externally.
+  base_url: "http://localhost:8080"
+  # HMAC secret for signing cookies/tokens. Must be at least 64 bytes for
+  # actix-session / cookie::Key.
+  #
+  # NOTE: base.yaml intentionally uses a short, invalid placeholder so that
+  # any environment which forgets to override `hmac_secret` fails fast at
+  # startup. Environment-specific files (dev/staging/production) must
+  # provide a real 64+ byte secret.
+  hmac_secret: "not-a-secret"
+
+database:
+  host: "localhost"
+  port: "5432"
+  username: "app"
+  password: "secret"
+  # mae::DatabaseSettings expects `database_name`, not `db_name`.
+  database_name: "service_db"
+  # Local/dev connections default to non-SSL; staging/production override to true.
+  require_ssl: false
+
+# NOTE: database_admin is optional in mae and all fields have defaults.
+# These fields document the expected shape, but services can override or omit
+# this block entirely if they don't need mae's database provisioning helpers.
+database_admin:
+  superuser: "postgres"
+  superuser_password: "postgres"
+  superuser_db: "postgres"
+  migrator_user: "db_migrator"
+  migrator_password: "migrator_secret"
+  app_user: "app"
+  app_user_password: "secret"
+  db_name: "service_db"
+
+graphdb:
+  host: "localhost"
+  port: "7687"
+  username: "neo4j"
+  password: "testpassword"
+
+messagebroker:
+  host: "localhost"
+  port: "5672"
+  username: "guest"
+  password: "guest"
+
+# Entry point for service-specific configuration. Each application defines
+# its own `CustomSettings` struct under this key.
+custom: {}

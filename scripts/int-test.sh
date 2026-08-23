@@ -33,6 +33,17 @@ step()    { echo "${BLUE}▶${RESET} ${BOLD}$*${RESET}"; }
 # 🧪 Integration Test Runner
 ########################################
 
+# Parse --ci flag: when running in CI, unset MAE_TESTCONTAINERS so docker-gated
+# tests (#[mae_test(docker)]) are compiled without the env var and skip at runtime.
+# Developers run the script without this flag — ci_env.toml sets MAE_TESTCONTAINERS=1
+# automatically so containers spin up with no extra setup required.
+CI_MODE=false
+for arg in "$@"; do
+  if [[ "$arg" == "--ci" ]]; then
+    CI_MODE=true
+  fi
+done
+
 section "Integration Tests"
 step "Reading configuration from .ci/ci_env.toml"
 
@@ -100,10 +111,25 @@ if [[ -n "$ENV_VARS" ]]; then
       err "❌ ERROR: invalid env entry '$kv' (expected KEY=VALUE)"
       exit 1
     fi
+    # Skip GitHub Actions secret references — resolved by CI workflow before this script runs
+    # Locally these are not resolvable; missing vars are caught by the warning block below
+    if [[ "$kv" == *'${{ secrets.'* ]]; then
+      info "   ↷ ${kv%%=*} (CI secret — resolved by workflow)"
+      continue
+    fi
     export "$kv"
     info "   ${kv%%=*}=${kv#*=}"
   done <<< "$ENV_VARS"
 fi
+
+# In CI mode, unset MAE_TESTCONTAINERS so docker-gated tests are compiled without
+# the env var — option_env!() will see None, and those tests skip early.
+if [[ "$CI_MODE" == "true" ]]; then
+  step "--ci mode: unsetting MAE_TESTCONTAINERS (docker-gated tests will skip)"
+  unset MAE_TESTCONTAINERS
+fi
+
+
 
 # Build flags array
 ARGS=()
